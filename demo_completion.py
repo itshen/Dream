@@ -11,7 +11,7 @@ model = model.to("cuda").eval()
 #     {"role": "user", "content": "Janet's ducks lay 16 eggs per day. She eats three for breakfast every morning and bakes muffins for her friends every day with four. She sells the remainder at the farmers' market daily for $2 per fresh duck egg. How much in dollars does she make every day at the farmers' market?"},
 # ]
 messages = [
-    {"role": "user", "content": "Please write a Python class that implements a PyTorch trainer capable of training a model on a toy dataset."}
+    {"role": "user", "content": "请简单介绍一下你自己。"} # Please write a Python class that implements a PyTorch trainer capable of training a model on a toy dataset."}
 ]
 inputs = tokenizer.apply_chat_template(
     messages, return_tensors="pt", return_dict=True, add_generation_prompt=True

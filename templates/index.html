@@ -1,0 +1,570 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dream-v0-Instruct-7B 演示</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 8px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+            background: #f1f1f1;
+            border-radius: 4px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: #888;
+            border-radius: 4px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+            background: #555;
+        }
+        .mask-token {
+            background-color: rgba(242, 255, 55, 0.2);
+            padding: 0 2px;
+            border-radius: 2px;
+        }
+        
+        /* 模态框样式 */
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.5);
+            overflow: auto;
+        }
+        
+        .modal-content {
+            background-color: #fff;
+            margin: 10% auto;
+            padding: 25px;
+            border-radius: 10px;
+            width: 80%;
+            max-width: 600px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+            position: relative;
+            animation: modalopen 0.4s;
+        }
+        
+        @keyframes modalopen {
+            from {opacity: 0; transform: translateY(-30px);}
+            to {opacity: 1; transform: translateY(0);}
+        }
+        
+        .modal-close {
+            background-color: #4a89dc;
+            color: white;
+            padding: 8px 15px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-top: 15px;
+            transition: background-color 0.2s;
+        }
+        
+        .modal-close:hover {
+            background-color: #3b77ca;
+        }
+        
+        .about-btn {
+            text-decoration: underline;
+            cursor: pointer;
+            color: #4a89dc;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen">
+    <div class="container mx-auto py-8 px-4">
+        <h1 class="text-3xl font-bold text-center mb-8 text-gray-800">Dream-v0-Instruct-7B 扩散文本生成演示</h1>
+        
+        <div class="flex flex-col lg:flex-row gap-6">
+            <!-- 左侧面板：输入和参数 -->
+            <div class="w-full lg:w-2/5 flex flex-col gap-6">
+                <div class="bg-white rounded-lg shadow-lg p-6">
+                    <h2 class="text-xl font-semibold mb-4 text-gray-700">系统提示</h2>
+                    <textarea id="systemPrompt" class="w-full p-3 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 custom-scrollbar" rows="2" placeholder="例如: You are a helpful assistant.">You are a helpful assistant.</textarea>
+                </div>
+                
+                <div class="bg-white rounded-lg shadow-lg p-6">
+                    <h2 class="text-xl font-semibold mb-4 text-gray-700">用户输入</h2>
+                    <div class="flex flex-col">
+                        <textarea id="userInput" class="w-full p-3 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 custom-scrollbar" rows="2" placeholder="输入您的问题..."></textarea>
+                        <button id="submitBtn" class="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-md transition-colors mt-2">发送</button>
+                    </div>
+                </div>
+                
+                <!-- 高级参数设置 -->
+                <div class="bg-white rounded-lg shadow-lg p-6">
+                    <div class="flex justify-between items-center mb-4">
+                        <h2 class="text-xl font-semibold text-gray-700">高级参数设置</h2>
+                        <button id="toggleParamsBtn" class="text-sm text-blue-500 hover:text-blue-700">显示/隐藏</button>
+                    </div>
+                    <div id="paramsContainer">
+                        <div class="grid grid-cols-1 gap-4">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">步骤数 (steps)</label>
+                                <input type="range" id="stepsRange" min="16" max="1024" step="16" value="16" class="w-full">
+                                <div class="flex justify-between text-xs text-gray-500">
+                                    <span>16 (快速)</span>
+                                    <span id="stepsValue">16</span>
+                                    <span>1024 (高质量)</span>
+                                </div>
+                            </div>
+                            
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">温度 (temperature)</label>
+                                <input type="range" id="tempRange" min="0" max="1" step="0.05" value="0.75" class="w-full">
+                                <div class="flex justify-between text-xs text-gray-500">
+                                    <span>0.0 (精确)</span>
+                                    <span id="tempValue">0.75</span>
+                                    <span>1.0 (多样)</span>
+                                </div>
+                            </div>
+                            
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">top_p</label>
+                                <input type="range" id="topPRange" min="0" max="1" step="0.1" value="0.7" class="w-full">
+                                <div class="flex justify-between text-xs text-gray-500">
+                                    <span>0.0 (聚焦)</span>
+                                    <span id="topPValue">0.7</span>
+                                    <span>1.0 (开放)</span>
+                                </div>
+                            </div>
+                            
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">最大生成长度 (max_new_tokens)</label>
+                                <input type="range" id="maxTokensRange" min="128" max="1024" step="64" value="512" class="w-full">
+                                <div class="flex justify-between text-xs text-gray-500">
+                                    <span>128</span>
+                                    <span id="maxTokensValue">512</span>
+                                    <span>1024</span>
+                                </div>
+                            </div>
+                            
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">采样算法 (alg)</label>
+                                <select id="algSelect" class="w-full p-2 border border-gray-300 rounded-md">
+                                    <option value="entropy">entropy (基于熵的采样，推荐)</option>
+                                    <option value="origin" selected>origin (随机顺序，可能降低性能)</option>
+                                    <option value="maskgit_plus">maskgit_plus (基于top1置信度)</option>
+                                    <option value="topk_margin">topk_margin (基于边际置信度)</option>
+                                </select>
+                            </div>
+                            
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">算法温度 (alg_temp)</label>
+                                <input type="range" id="algTempRange" min="0" max="1" step="0.05" value="0.2" class="w-full">
+                                <div class="flex justify-between text-xs text-gray-500">
+                                    <span>0.0 (确定性)</span>
+                                    <span id="algTempValue">0.2</span>
+                                    <span>1.0 (随机性)</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- GitHub来源链接 -->
+                <div class="text-center">
+                    <a href="https://github.com/HKUNLP/Dream" target="_blank" class="text-blue-500 hover:text-blue-700 inline-flex items-center">
+                        <svg class="w-5 h-5 mr-1" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                            <path fill-rule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" clip-rule="evenodd"></path>
+                        </svg>
+                        Dream-v0-Instruct-7B 模型源码
+                    </a>
+                    <p class="text-xs text-gray-500 mt-1">HKUNLP/Dream: 扩散型文本生成模型 | <span class="about-btn" id="openAboutModal">关于我</span></p>
+                </div>
+            </div>
+            
+            <!-- 右侧面板：生成结果 -->
+            <div class="w-full lg:w-3/5">
+                <div class="bg-white rounded-lg shadow-lg p-6 h-full">
+                    <div class="flex justify-between items-center mb-4">
+                        <h2 class="text-xl font-semibold text-gray-700">结果预览</h2>
+                        <div class="flex space-x-2">
+                            <span id="stepCounter" class="text-sm text-gray-500">步骤: 0/0</span>
+                            <button id="stopBtn" class="text-sm text-yellow-500 hover:text-yellow-700 hidden">停止</button>
+                            <button id="clearBtn" class="text-sm text-red-500 hover:text-red-700">清除</button>
+                        </div>
+                    </div>
+                    <div id="outputContainer" class="h-[calc(100vh-260px)] p-4 bg-gray-50 rounded-md overflow-auto custom-scrollbar whitespace-pre-wrap font-mono text-sm"></div>
+                    <div id="performanceStats" class="mt-2 text-xs text-gray-500 hidden">
+                        <div class="flex justify-between">
+                            <span>生成耗时: <span id="genTime">0</span>秒</span>
+                            <span>生成Token: <span id="genTokens">0</span>个</span>
+                            <span>速度: <span id="genTPS">0</span> tokens/s</span>
+                        </div>
+                    </div>
+                    <div class="mt-2 text-xs text-gray-500">
+                        <p>每一步迭代会填充一个掩码标记，观察扩散生成过程</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const systemPromptElem = document.getElementById('systemPrompt');
+            const userInputElem = document.getElementById('userInput');
+            const submitBtn = document.getElementById('submitBtn');
+            const clearBtn = document.getElementById('clearBtn');
+            const stopBtn = document.getElementById('stopBtn');
+            const outputContainer = document.getElementById('outputContainer');
+            const stepCounter = document.getElementById('stepCounter');
+            
+            let eventSource = null;
+            let currentTaskId = null;
+            
+            // 提交用户输入
+            function submitQuery() {
+                const systemPrompt = systemPromptElem.value.trim();
+                const userInput = userInputElem.value.trim();
+                
+                if (!userInput) {
+                    alert('请输入问题');
+                    return;
+                }
+                
+                // 获取高级参数设置
+                const params = {
+                    steps: parseInt(document.getElementById('stepsRange').value),
+                    temperature: parseFloat(document.getElementById('tempRange').value),
+                    top_p: parseFloat(document.getElementById('topPRange').value),
+                    max_new_tokens: parseInt(document.getElementById('maxTokensRange').value),
+                    alg: document.getElementById('algSelect').value,
+                    alg_temp: parseFloat(document.getElementById('algTempRange').value)
+                };
+                
+                // 禁用输入和按钮，表示正在处理
+                userInputElem.disabled = true;
+                submitBtn.disabled = true;
+                submitBtn.classList.add('bg-blue-400');
+                submitBtn.classList.remove('bg-blue-600', 'hover:bg-blue-700');
+                stepCounter.textContent = '步骤: 0/0';
+                
+                // 显示用户输入
+                outputContainer.innerHTML = '<div id="modelOutput" class="mt-2"></div>';
+                
+                // 关闭现有的SSE连接
+                if (eventSource) {
+                    eventSource.close();
+                    eventSource = null;
+                }
+                
+                // 首先发送请求创建生成任务
+                fetch('/api/generate', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        system_prompt: systemPrompt,
+                        user_input: userInput,
+                        params: params
+                    })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.task_id) {
+                        // 任务创建成功，连接SSE流
+                        console.log('任务ID:', data.task_id);
+                        currentTaskId = data.task_id;
+                        
+                        // 显示停止按钮
+                        stopBtn.classList.remove('hidden');
+                        
+                        // 创建SSE连接
+                        eventSource = new EventSource('/stream/' + data.task_id);
+                        
+                        // 处理SSE事件
+                        eventSource.onmessage = function(event) {
+                            try {
+                                const data = JSON.parse(event.data);
+                                const modelOutput = document.getElementById('modelOutput');
+                                
+                                // 获取当前设置的步骤总数
+                                const totalSteps = parseInt(document.getElementById('stepsRange').value);
+                                
+                                // 更新步骤计数
+                                if (typeof data.step === 'number') {
+                                    stepCounter.textContent = `步骤: ${data.step}/${totalSteps}`;
+                                } else {
+                                    stepCounter.textContent = `状态: ${data.step}`;
+                                    
+                                    // 如果接收到完成或错误状态，恢复UI
+                                    if (data.step === "完成" || data.step === "错误" || data.step === "超时" || data.step === "停止") {
+                                        console.log('生成完成状态:', data.step);
+                                        
+                                        // 如果是提前结束的，显示提示
+                                        if (data.early_stopped) {
+                                            stepCounter.textContent = `状态: 提前结束`;
+                                            console.log('由于连续50次迭代无变化，提前结束生成');
+                                        }
+                                        
+                                        // 如果是用户停止的，显示提示
+                                        if (data.user_stopped) {
+                                            stepCounter.textContent = `状态: 已停止`;
+                                            console.log('用户已停止生成');
+                                        }
+                                        
+                                        // 显示性能统计数据（如果有）
+                                        if (data.performance) {
+                                            const performanceStats = document.getElementById('performanceStats');
+                                            document.getElementById('genTime').textContent = data.performance.time;
+                                            document.getElementById('genTokens').textContent = data.performance.tokens;
+                                            document.getElementById('genTPS').textContent = data.performance.tps;
+                                            performanceStats.classList.remove('hidden');
+                                        }
+                                        
+                                        // 隐藏停止按钮
+                                        stopBtn.classList.add('hidden');
+                                        stopBtn.textContent = "停止";
+                                        stopBtn.disabled = false;
+                                        
+                                        eventSource.close();
+                                        eventSource = null;
+                                        userInputElem.disabled = false;
+                                        submitBtn.disabled = false;
+                                        submitBtn.classList.remove('bg-blue-400');
+                                        submitBtn.classList.add('bg-blue-600', 'hover:bg-blue-700');
+                                    }
+                                }
+                                
+                                // 替换掩码标记为带有特殊样式的span
+                                const formattedText = data.text.replace(/<\|mask\|>/g, '<span class="mask-token">[Mask]</span>');
+                                
+                                // 不再清理文本，保留原始输出
+                                // let cleanText = formattedText;
+                                // 移除所有的<|im_start|>xxx和<|im_end|>标记
+                                // cleanText = cleanText.replace(/<\|im_start\|>[^<]*?(?=<\|im_start\|>|<\|im_end\|>|$)/g, '');
+                                // cleanText = cleanText.replace(/<\|im_end\|>/g, '');
+                                // 移除system、user、assistant等角色标记
+                                // cleanText = cleanText.replace(/^\s*(system|user|assistant)\s*\n/gm, '');
+                                
+                                // 更新输出，保留原始格式
+                                modelOutput.innerHTML = formattedText;
+                                
+                                // 滚动到底部
+                                outputContainer.scrollTop = outputContainer.scrollHeight;
+                            } catch (e) {
+                                console.error('解析SSE事件出错:', e, event.data);
+                            }
+                        };
+                        
+                        eventSource.onerror = function(error) {
+                            console.error('SSE连接错误:', error);
+                            if (eventSource) {
+                                eventSource.close();
+                                eventSource = null;
+                            }
+                            
+                            // 隐藏停止按钮并重置状态
+                            stopBtn.classList.add('hidden');
+                            stopBtn.textContent = "停止";
+                            stopBtn.disabled = false;
+                            
+                            userInputElem.disabled = false;
+                            submitBtn.disabled = false;
+                            submitBtn.classList.remove('bg-blue-400');
+                            submitBtn.classList.add('bg-blue-600', 'hover:bg-blue-700');
+                            
+                            // 显示错误信息
+                            const modelOutput = document.getElementById('modelOutput');
+                            if (modelOutput) {
+                                modelOutput.innerHTML += '<div class="text-red-500 mt-2">连接中断，请重试</div>';
+                            }
+                        };
+                    } else {
+                        // 任务创建失败
+                        console.error('创建任务失败:', data);
+                        
+                        // 隐藏停止按钮
+                        stopBtn.classList.add('hidden');
+                        stopBtn.textContent = "停止";
+                        stopBtn.disabled = false;
+                        
+                        userInputElem.disabled = false;
+                        submitBtn.disabled = false;
+                        submitBtn.classList.remove('bg-blue-400');
+                        submitBtn.classList.add('bg-blue-600', 'hover:bg-blue-700');
+                        
+                        // 显示错误信息
+                        const modelOutput = document.getElementById('modelOutput');
+                        if (modelOutput) {
+                            modelOutput.innerHTML = '<div class="text-red-500">创建生成任务失败，请重试</div>';
+                        }
+                    }
+                })
+                .catch(error => {
+                    console.error('请求错误:', error);
+                    
+                    // 隐藏停止按钮
+                    stopBtn.classList.add('hidden');
+                    stopBtn.textContent = "停止";
+                    stopBtn.disabled = false;
+                    
+                    userInputElem.disabled = false;
+                    submitBtn.disabled = false;
+                    submitBtn.classList.remove('bg-blue-400');
+                    submitBtn.classList.add('bg-blue-600', 'hover:bg-blue-700');
+                    
+                    // 显示错误信息
+                    const modelOutput = document.getElementById('modelOutput');
+                    if (modelOutput) {
+                        modelOutput.innerHTML = '<div class="text-red-500">请求失败，请重试</div>';
+                    }
+                });
+            }
+            
+            // HTML转义，防止XSS
+            function escapeHtml(unsafe) {
+                return unsafe
+                    .replace(/&/g, "&amp;")
+                    .replace(/</g, "&lt;")
+                    .replace(/>/g, "&gt;")
+                    .replace(/"/g, "&quot;")
+                    .replace(/'/g, "&#039;");
+            }
+            
+            // 提交按钮事件
+            submitBtn.addEventListener('click', submitQuery);
+            
+            // 回车键提交
+            userInputElem.addEventListener('keydown', function(e) {
+                // 只有按下Ctrl+Enter或Shift+Enter时才提交
+                if (e.key === 'Enter' && (e.ctrlKey || e.shiftKey)) {
+                    e.preventDefault(); // 阻止默认的换行行为
+                    submitQuery();
+                }
+            });
+            
+            // 停止按钮事件
+            stopBtn.addEventListener('click', function() {
+                if (currentTaskId) {
+                    // 发送停止请求
+                    fetch('/api/stop/' + currentTaskId, {
+                        method: 'POST'
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        console.log('停止请求结果:', data);
+                    })
+                    .catch(error => {
+                        console.error('停止请求出错:', error);
+                    });
+                    
+                    // 更新UI，防止多次点击
+                    stopBtn.textContent = "正在停止...";
+                    stopBtn.disabled = true;
+                }
+            });
+            
+            // 清除按钮事件
+            clearBtn.addEventListener('click', function() {
+                outputContainer.innerHTML = '<div class="text-gray-400 italic text-center mt-20">等待生成结果</div>';
+                userInputElem.value = '';
+                userInputElem.disabled = false;
+                submitBtn.disabled = false;
+                submitBtn.classList.remove('bg-blue-400');
+                submitBtn.classList.add('bg-blue-600', 'hover:bg-blue-700');
+                stepCounter.textContent = '步骤: 0/0';
+                
+                // 隐藏停止按钮
+                stopBtn.classList.add('hidden');
+                stopBtn.textContent = "停止";
+                stopBtn.disabled = false;
+                
+                // 隐藏性能统计
+                document.getElementById('performanceStats').classList.add('hidden');
+                
+                if (eventSource) {
+                    eventSource.close();
+                }
+            });
+            
+            // 初始显示
+            outputContainer.innerHTML = '<div class="text-gray-400 italic text-center mt-20">等待生成结果</div>';
+            
+            // 参数滑块更新显示值
+            document.getElementById('stepsRange').addEventListener('input', function() {
+                document.getElementById('stepsValue').textContent = this.value;
+            });
+            
+            document.getElementById('tempRange').addEventListener('input', function() {
+                document.getElementById('tempValue').textContent = this.value;
+            });
+            
+            document.getElementById('topPRange').addEventListener('input', function() {
+                document.getElementById('topPValue').textContent = this.value;
+            });
+            
+            document.getElementById('maxTokensRange').addEventListener('input', function() {
+                document.getElementById('maxTokensValue').textContent = this.value;
+            });
+            
+            document.getElementById('algTempRange').addEventListener('input', function() {
+                document.getElementById('algTempValue').textContent = this.value;
+            });
+            
+            // 显示/隐藏高级参数设置
+            document.getElementById('toggleParamsBtn').addEventListener('click', function() {
+                const paramsContainer = document.getElementById('paramsContainer');
+                paramsContainer.classList.toggle('hidden');
+            });
+            
+            // 个人介绍模态框的控制
+            const modal = document.getElementById('about-modal');
+            const openModalBtn = document.getElementById('openAboutModal');
+            const closeModalBtn = document.getElementById('close-modal');
+            
+            openModalBtn.addEventListener('click', function() {
+                modal.style.display = 'block';
+            });
+            
+            closeModalBtn.addEventListener('click', function() {
+                modal.style.display = 'none';
+            });
+            
+            window.addEventListener('click', function(event) {
+                if (event.target == modal) {
+                    modal.style.display = 'none';
+                }
+            });
+        });
+    </script>
+    
+    <!-- 个人介绍模态框 -->
+    <div id="about-modal" class="modal">
+        <div class="modal-content">
+            <h3 style="font-size: 20px; margin-bottom: 10px; font-weight: bold;">👋 嗨，我是洛小山</h3>
+            <p style="color: #666; font-size: 14px;">白天是个爱折腾的 AI 产品经理，晚上是个快乐的小开发~ </p>
+            
+            <p style="color: #1890ff; margin-top: 15px;">🎯 关于这个工具</p>
+            <p>这是我基于Dream-v0-Instruct-7B模型开发的文本生成演示应用，希望能帮你体验扩散文本生成的魅力！</p>
+            
+            <p style="color: #1890ff; margin-top: 15px;">🚀 更多好玩的</p>
+            <p>我还在捣鼓更多有趣的 AI 小工具，会在公众号【洛小山】和大家分享：</p>
+            <ul style="color: #666; margin: 8px 0; padding-left: 20px;">
+                <li>各种实用的 AI 工具</li>
+                <li>有趣的技术教程</li>
+                <li>AI 技术到产品的实践</li>
+                <li>AI 产品拆解</li>
+            </ul>
+            
+            <p style="color: #1890ff; margin-top: 15px;">💡 期待你的想法</p>
+            <p>在日常工作或生活中，<span style="color: #ff4d4f; font-weight: 500;">有没有觉得"要是有个 AI 工具能帮我做这个就好了"？</span>欢迎联系我交流，说不定你的小需求就能变成下一个实用工具！</p>
+            
+            <p style="color: #1890ff; margin-top: 15px;">🐛 遇到问题？</p>
+            <p>开发不易，难免有 bug ~ 如果你发现了什么问题，欢迎来和我说说，我会及时修复的！你的反馈就是对我最好的支持 😊</p>
+            
+            <button id="close-modal" class="modal-close">关闭</button>
+        </div>
+    </div>
+</body>
+</html> 
