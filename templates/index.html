@@ -186,8 +186,9 @@
                 <div class="bg-white rounded-lg shadow-lg p-6 h-full">
                     <div class="flex justify-between items-center mb-4">
                         <h2 class="text-xl font-semibold text-gray-700">结果预览</h2>
-                        <div class="flex space-x-2">
+                        <div class="flex space-x-2 items-center">
                             <span id="stepCounter" class="text-sm text-gray-500">步骤: 0/0</span>
+                            <select id="iterationSelector" class="text-sm border border-gray-300 rounded-md py-0.5 px-1 hidden" title="选择查看特定迭代步骤的输出"></select>
                             <button id="stopBtn" class="text-sm text-yellow-500 hover:text-yellow-700 hidden">停止</button>
                             <button id="clearBtn" class="text-sm text-red-500 hover:text-red-700">清除</button>
                         </div>
@@ -217,12 +218,51 @@
             const stopBtn = document.getElementById('stopBtn');
             const outputContainer = document.getElementById('outputContainer');
             const stepCounter = document.getElementById('stepCounter');
+            const iterationSelector = document.getElementById('iterationSelector');
+            const performanceStats = document.getElementById('performanceStats');
+            const genTime = document.getElementById('genTime');
+            const genTokens = document.getElementById('genTokens');
+            const genTPS = document.getElementById('genTPS');
+            const paramsContainer = document.getElementById('paramsContainer');
+            const toggleParamsBtn = document.getElementById('toggleParamsBtn');
+            const openAboutModalBtn = document.getElementById('openAboutModal');
+            const aboutModal = document.getElementById('aboutModal');
+            const closeAboutModalBtn = document.getElementById('closeAboutModal');
             
             let eventSource = null;
             let currentTaskId = null;
+            let iterationHistory = {};
+            let totalSteps = 0;
             
-            // 提交用户输入
+            function updateValueDisplay(rangeId, valueId) {
+                const range = document.getElementById(rangeId);
+                const valueDisplay = document.getElementById(valueId);
+                if (range && valueDisplay) {
+                    valueDisplay.textContent = range.value;
+                    range.addEventListener('input', () => {
+                        valueDisplay.textContent = range.value;
+                    });
+                }
+            }
+            
+            updateValueDisplay('stepsRange', 'stepsValue');
+            updateValueDisplay('tempRange', 'tempValue');
+            updateValueDisplay('topPRange', 'topPValue');
+            updateValueDisplay('maxTokensRange', 'maxTokensValue');
+            updateValueDisplay('algTempRange', 'algTempValue');
+            
+            toggleParamsBtn.addEventListener('click', () => {
+                paramsContainer.classList.toggle('hidden');
+            });
+            
+            paramsContainer.classList.add('hidden');
+            
             function submitQuery() {
+                iterationHistory = {};
+                iterationSelector.innerHTML = '';
+                iterationSelector.classList.add('hidden');
+                performanceStats.classList.add('hidden');
+                
                 const systemPrompt = systemPromptElem.value.trim();
                 const userInput = userInputElem.value.trim();
                 
@@ -231,7 +271,6 @@
                     return;
                 }
                 
-                // 获取高级参数设置
                 const params = {
                     steps: parseInt(document.getElementById('stepsRange').value),
                     temperature: parseFloat(document.getElementById('tempRange').value),
@@ -240,302 +279,223 @@
                     alg: document.getElementById('algSelect').value,
                     alg_temp: parseFloat(document.getElementById('algTempRange').value)
                 };
+                totalSteps = params.steps;
                 
-                // 禁用输入和按钮，表示正在处理
                 userInputElem.disabled = true;
+                systemPromptElem.disabled = true;
                 submitBtn.disabled = true;
+                submitBtn.textContent = '生成中...';
                 submitBtn.classList.add('bg-blue-400');
                 submitBtn.classList.remove('bg-blue-600', 'hover:bg-blue-700');
-                stepCounter.textContent = '步骤: 0/0';
+                clearBtn.disabled = true;
+                stopBtn.classList.remove('hidden');
+                stepCounter.textContent = `步骤: 0/${totalSteps}`;
+                outputContainer.textContent = '正在连接服务器并启动生成任务...';
                 
-                // 显示用户输入
-                outputContainer.innerHTML = '<div id="modelOutput" class="mt-2"></div>';
-                
-                // 关闭现有的SSE连接
                 if (eventSource) {
                     eventSource.close();
-                    eventSource = null;
                 }
                 
-                // 首先发送请求创建生成任务
                 fetch('/api/generate', {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        system_prompt: systemPrompt,
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        system_prompt: systemPrompt, 
                         user_input: userInput,
-                        params: params
+                        params: params 
                     })
                 })
                 .then(response => response.json())
                 .then(data => {
-                    if (data.task_id) {
-                        // 任务创建成功，连接SSE流
-                        console.log('任务ID:', data.task_id);
-                        currentTaskId = data.task_id;
-                        
-                        // 显示停止按钮
-                        stopBtn.classList.remove('hidden');
-                        
-                        // 创建SSE连接
-                        eventSource = new EventSource('/stream/' + data.task_id);
-                        
-                        // 处理SSE事件
-                        eventSource.onmessage = function(event) {
-                            try {
-                                const data = JSON.parse(event.data);
-                                const modelOutput = document.getElementById('modelOutput');
-                                
-                                // 获取当前设置的步骤总数
-                                const totalSteps = parseInt(document.getElementById('stepsRange').value);
-                                
-                                // 更新步骤计数
-                                if (typeof data.step === 'number') {
-                                    stepCounter.textContent = `步骤: ${data.step}/${totalSteps}`;
-                                } else {
-                                    stepCounter.textContent = `状态: ${data.step}`;
-                                    
-                                    // 如果接收到完成或错误状态，恢复UI
-                                    if (data.step === "完成" || data.step === "错误" || data.step === "超时" || data.step === "停止") {
-                                        console.log('生成完成状态:', data.step);
-                                        
-                                        // 如果是提前结束的，显示提示
-                                        if (data.early_stopped) {
-                                            stepCounter.textContent = `状态: 提前结束`;
-                                            console.log('由于连续50次迭代无变化，提前结束生成');
-                                        }
-                                        
-                                        // 如果是用户停止的，显示提示
-                                        if (data.user_stopped) {
-                                            stepCounter.textContent = `状态: 已停止`;
-                                            console.log('用户已停止生成');
-                                        }
-                                        
-                                        // 显示性能统计数据（如果有）
-                                        if (data.performance) {
-                                            const performanceStats = document.getElementById('performanceStats');
-                                            document.getElementById('genTime').textContent = data.performance.time;
-                                            document.getElementById('genTokens').textContent = data.performance.tokens;
-                                            document.getElementById('genTPS').textContent = data.performance.tps;
-                                            performanceStats.classList.remove('hidden');
-                                        }
-                                        
-                                        // 隐藏停止按钮
-                                        stopBtn.classList.add('hidden');
-                                        stopBtn.textContent = "停止";
-                                        stopBtn.disabled = false;
-                                        
-                                        eventSource.close();
-                                        eventSource = null;
-                                        userInputElem.disabled = false;
-                                        submitBtn.disabled = false;
-                                        submitBtn.classList.remove('bg-blue-400');
-                                        submitBtn.classList.add('bg-blue-600', 'hover:bg-blue-700');
-                                    }
-                                }
-                                
-                                // 替换掩码标记为带有特殊样式的span
-                                const formattedText = data.text.replace(/<\|mask\|>/g, '<span class="mask-token">[Mask]</span>');
-                                
-                                // 不再清理文本，保留原始输出
-                                // let cleanText = formattedText;
-                                // 移除所有的<|im_start|>xxx和<|im_end|>标记
-                                // cleanText = cleanText.replace(/<\|im_start\|>[^<]*?(?=<\|im_start\|>|<\|im_end\|>|$)/g, '');
-                                // cleanText = cleanText.replace(/<\|im_end\|>/g, '');
-                                // 移除system、user、assistant等角色标记
-                                // cleanText = cleanText.replace(/^\s*(system|user|assistant)\s*\n/gm, '');
-                                
-                                // 更新输出，保留原始格式
-                                modelOutput.innerHTML = formattedText;
-                                
-                                // 滚动到底部
-                                outputContainer.scrollTop = outputContainer.scrollHeight;
-                            } catch (e) {
-                                console.error('解析SSE事件出错:', e, event.data);
-                            }
-                        };
-                        
-                        eventSource.onerror = function(error) {
-                            console.error('SSE连接错误:', error);
-                            if (eventSource) {
-                                eventSource.close();
-                                eventSource = null;
-                            }
-                            
-                            // 隐藏停止按钮并重置状态
-                            stopBtn.classList.add('hidden');
-                            stopBtn.textContent = "停止";
-                            stopBtn.disabled = false;
-                            
-                            userInputElem.disabled = false;
-                            submitBtn.disabled = false;
-                            submitBtn.classList.remove('bg-blue-400');
-                            submitBtn.classList.add('bg-blue-600', 'hover:bg-blue-700');
-                            
-                            // 显示错误信息
-                            const modelOutput = document.getElementById('modelOutput');
-                            if (modelOutput) {
-                                modelOutput.innerHTML += '<div class="text-red-500 mt-2">连接中断，请重试</div>';
-                            }
-                        };
-                    } else {
-                        // 任务创建失败
-                        console.error('创建任务失败:', data);
-                        
-                        // 隐藏停止按钮
-                        stopBtn.classList.add('hidden');
-                        stopBtn.textContent = "停止";
-                        stopBtn.disabled = false;
-                        
-                        userInputElem.disabled = false;
-                        submitBtn.disabled = false;
-                        submitBtn.classList.remove('bg-blue-400');
-                        submitBtn.classList.add('bg-blue-600', 'hover:bg-blue-700');
-                        
-                        // 显示错误信息
-                        const modelOutput = document.getElementById('modelOutput');
-                        if (modelOutput) {
-                            modelOutput.innerHTML = '<div class="text-red-500">创建生成任务失败，请重试</div>';
-                        }
+                    if (data.error) {
+                        outputContainer.textContent = `错误: ${data.error}`;
+                        resetUI();
+                        return;
                     }
+                    currentTaskId = data.task_id;
+                    outputContainer.textContent = '任务已启动，等待生成...';
+                    connectToStream(currentTaskId);
                 })
                 .catch(error => {
                     console.error('请求错误:', error);
-                    
-                    // 隐藏停止按钮
-                    stopBtn.classList.add('hidden');
-                    stopBtn.textContent = "停止";
-                    stopBtn.disabled = false;
-                    
-                    userInputElem.disabled = false;
-                    submitBtn.disabled = false;
-                    submitBtn.classList.remove('bg-blue-400');
-                    submitBtn.classList.add('bg-blue-600', 'hover:bg-blue-700');
-                    
-                    // 显示错误信息
-                    const modelOutput = document.getElementById('modelOutput');
-                    if (modelOutput) {
-                        modelOutput.innerHTML = '<div class="text-red-500">请求失败，请重试</div>';
-                    }
+                    outputContainer.textContent = `请求失败: ${error}`;
+                    resetUI();
                 });
             }
             
-            // HTML转义，防止XSS
-            function escapeHtml(unsafe) {
-                return unsafe
-                    .replace(/&/g, "&amp;")
-                    .replace(/</g, "&lt;")
-                    .replace(/>/g, "&gt;")
-                    .replace(/"/g, "&quot;")
-                    .replace(/'/g, "&#039;");
+            function connectToStream(taskId) {
+                eventSource = new EventSource(`/stream/${taskId}`);
+                outputContainer.textContent = '';
+                
+                eventSource.onmessage = function(event) {
+                    const eventData = JSON.parse(event.data);
+                    handleSSEMessage(eventData);
+                };
+                
+                eventSource.onerror = function(error) {
+                    console.error('SSE 连接错误:', error);
+                    if (outputContainer.textContent && !outputContainer.textContent.includes("完成") && !outputContainer.textContent.includes("错误") && !outputContainer.textContent.includes("停止") && !outputContainer.textContent.includes("超时")) {
+                       outputContainer.textContent += '\n\n与服务器的连接中断。';
+                    }
+                    resetUI(false);
+                    eventSource.close();
+                };
             }
             
-            // 提交按钮事件
-            submitBtn.addEventListener('click', submitQuery);
+            function handleSSEMessage(eventData) {
+                let currentStep = 0;
+                if (typeof eventData.step === 'number') {
+                    currentStep = eventData.step;
+                    iterationHistory[currentStep] = eventData.text;
+                    stepCounter.textContent = `步骤: ${currentStep}/${totalSteps}`;
+                    const formattedText = eventData.text.replace(/<\|mask\|>/g, '<span class="mask-token">[Mask]</span>');
+                    outputContainer.innerHTML = formattedText;
+                    updateIterationSelector(currentStep);
+                    outputContainer.scrollTop = outputContainer.scrollHeight;
+                } else if (eventData.step === "完成") {
+                    const finalStepKey = Math.max(...Object.keys(iterationHistory).map(Number).filter(isFinite), 0);
+                    iterationHistory['完成'] = eventData.text;
+                    
+                    const formattedText = eventData.text.replace(/<\|mask\|>/g, '<span class="mask-token">[Mask]</span>');
+                    outputContainer.innerHTML = formattedText;
+                    stepCounter.textContent = `步骤: 完成 (${totalSteps}/${totalSteps})`;
+                    updateIterationSelector('完成');
+                    
+                    if (eventData.performance) {
+                        genTime.textContent = eventData.performance.time;
+                        genTokens.textContent = eventData.performance.tokens;
+                        genTPS.textContent = eventData.performance.tps;
+                        performanceStats.classList.remove('hidden');
+                    }
+                    
+                    resetUI();
+                    eventSource.close();
+                } else if (eventData.step === "错误") {
+                    outputContainer.textContent += `\n\n错误: ${eventData.text}`;
+                    stepCounter.textContent = '步骤: 错误';
+                    resetUI();
+                    eventSource.close();
+                } else if (eventData.step === "超时") {
+                     outputContainer.textContent += `\n\n${eventData.text}`;
+                     stepCounter.textContent = '步骤: 超时';
+                     resetUI();
+                     eventSource.close();
+                } else if (eventData.step === "停止") {
+                     outputContainer.textContent += `\n\n${eventData.text}`;
+                     stepCounter.textContent = '步骤: 用户停止';
+                     resetUI();
+                     eventSource.close();
+                }
+            }
             
-            // 回车键提交
-            userInputElem.addEventListener('keydown', function(e) {
-                // 只有按下Ctrl+Enter或Shift+Enter时才提交
-                if (e.key === 'Enter' && (e.ctrlKey || e.shiftKey)) {
-                    e.preventDefault(); // 阻止默认的换行行为
+            function updateIterationSelector(selectedStep) {
+                iterationSelector.innerHTML = '';
+                
+                const steps = Object.keys(iterationHistory)
+                                .map(k => (k === '完成' ? Infinity : parseInt(k)))
+                                .sort((a, b) => a - b);
+                
+                steps.forEach(stepKey => {
+                    const option = document.createElement('option');
+                    const displayKey = (stepKey === Infinity) ? '完成' : stepKey;
+                    option.value = displayKey;
+                    option.textContent = `步骤 ${displayKey}`;
+                    iterationSelector.appendChild(option);
+                });
+                
+                iterationSelector.value = selectedStep;
+                iterationSelector.classList.remove('hidden');
+            }
+            
+            function resetUI(clearTask = true) {
+                userInputElem.disabled = false;
+                systemPromptElem.disabled = false;
+                submitBtn.disabled = false;
+                submitBtn.textContent = '发送';
+                submitBtn.classList.remove('bg-blue-400');
+                submitBtn.classList.add('bg-blue-600', 'hover:bg-blue-700');
+                clearBtn.disabled = false;
+                stopBtn.classList.add('hidden');
+                if (clearTask) {
+                    currentTaskId = null;
+                }
+            }
+            
+            function clearOutput() {
+                outputContainer.textContent = '';
+                stepCounter.textContent = '步骤: 0/0';
+                performanceStats.classList.add('hidden');
+                iterationHistory = {};
+                iterationSelector.innerHTML = '';
+                iterationSelector.classList.add('hidden');
+            }
+            
+            function stopGeneration() {
+                if (!currentTaskId) {
+                    console.warn("没有正在进行的任务可以停止");
+                    return;
+                }
+                
+                console.log(`正在发送停止请求给任务: ${currentTaskId}`);
+                fetch(`/api/stop/${currentTaskId}`, { method: 'POST' })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success) {
+                            console.log("停止信号已发送");
+                            stopBtn.disabled = true;
+                            stopBtn.textContent = '停止中...';
+                        } else {
+                            console.error("停止请求失败:", data.error);
+                            alert(`停止请求失败: ${data.error}`);
+                        }
+                    })
+                    .catch(error => {
+                        console.error('停止请求错误:', error);
+                        alert(`停止请求时出错: ${error}`);
+                    });
+            }
+            
+            submitBtn.addEventListener('click', submitQuery);
+            userInputElem.addEventListener('keypress', function(e) {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
                     submitQuery();
                 }
             });
+            clearBtn.addEventListener('click', clearOutput);
+            stopBtn.addEventListener('click', stopGeneration);
             
-            // 停止按钮事件
-            stopBtn.addEventListener('click', function() {
-                if (currentTaskId) {
-                    // 发送停止请求
-                    fetch('/api/stop/' + currentTaskId, {
-                        method: 'POST'
-                    })
-                    .then(response => response.json())
-                    .then(data => {
-                        console.log('停止请求结果:', data);
-                    })
-                    .catch(error => {
-                        console.error('停止请求出错:', error);
-                    });
-                    
-                    // 更新UI，防止多次点击
-                    stopBtn.textContent = "正在停止...";
-                    stopBtn.disabled = true;
+            iterationSelector.addEventListener('change', function() {
+                const selectedStep = this.value;
+                if (iterationHistory[selectedStep] !== undefined) {
+                    const formattedText = iterationHistory[selectedStep].replace(/<\|mask\|>/g, '<span class="mask-token">[Mask]</span>');
+                    outputContainer.innerHTML = formattedText;
+                    if (selectedStep === '完成') {
+                         stepCounter.textContent = `步骤: 完成 (${totalSteps}/${totalSteps})`;
+                    } else {
+                         stepCounter.textContent = `步骤: ${selectedStep}/${totalSteps}`;
+                    }
+                    outputContainer.scrollTop = outputContainer.scrollHeight;
                 }
             });
             
-            // 清除按钮事件
-            clearBtn.addEventListener('click', function() {
-                outputContainer.innerHTML = '<div class="text-gray-400 italic text-center mt-20">等待生成结果</div>';
-                userInputElem.value = '';
-                userInputElem.disabled = false;
-                submitBtn.disabled = false;
-                submitBtn.classList.remove('bg-blue-400');
-                submitBtn.classList.add('bg-blue-600', 'hover:bg-blue-700');
-                stepCounter.textContent = '步骤: 0/0';
+            if (openAboutModalBtn && aboutModal && closeAboutModalBtn) {
+                openAboutModalBtn.addEventListener('click', () => {
+                    aboutModal.style.display = 'block';
+                });
                 
-                // 隐藏停止按钮
-                stopBtn.classList.add('hidden');
-                stopBtn.textContent = "停止";
-                stopBtn.disabled = false;
+                closeAboutModalBtn.addEventListener('click', () => {
+                     aboutModal.style.display = 'none';
+                });
                 
-                // 隐藏性能统计
-                document.getElementById('performanceStats').classList.add('hidden');
-                
-                if (eventSource) {
-                    eventSource.close();
-                }
-            });
-            
-            // 初始显示
-            outputContainer.innerHTML = '<div class="text-gray-400 italic text-center mt-20">等待生成结果</div>';
-            
-            // 参数滑块更新显示值
-            document.getElementById('stepsRange').addEventListener('input', function() {
-                document.getElementById('stepsValue').textContent = this.value;
-            });
-            
-            document.getElementById('tempRange').addEventListener('input', function() {
-                document.getElementById('tempValue').textContent = this.value;
-            });
-            
-            document.getElementById('topPRange').addEventListener('input', function() {
-                document.getElementById('topPValue').textContent = this.value;
-            });
-            
-            document.getElementById('maxTokensRange').addEventListener('input', function() {
-                document.getElementById('maxTokensValue').textContent = this.value;
-            });
-            
-            document.getElementById('algTempRange').addEventListener('input', function() {
-                document.getElementById('algTempValue').textContent = this.value;
-            });
-            
-            // 显示/隐藏高级参数设置
-            document.getElementById('toggleParamsBtn').addEventListener('click', function() {
-                const paramsContainer = document.getElementById('paramsContainer');
-                paramsContainer.classList.toggle('hidden');
-            });
-            
-            // 个人介绍模态框的控制
-            const modal = document.getElementById('about-modal');
-            const openModalBtn = document.getElementById('openAboutModal');
-            const closeModalBtn = document.getElementById('close-modal');
-            
-            openModalBtn.addEventListener('click', function() {
-                modal.style.display = 'block';
-            });
-            
-            closeModalBtn.addEventListener('click', function() {
-                modal.style.display = 'none';
-            });
-            
-            window.addEventListener('click', function(event) {
-                if (event.target == modal) {
-                    modal.style.display = 'none';
-                }
-            });
+                window.addEventListener('click', (event) => {
+                    if (event.target == aboutModal) {
+                        aboutModal.style.display = 'none';
+                    }
+                });
+            } else {
+                console.warn("未能找到关于模态框的所有元素。")
+            }
         });
     </script>
     
