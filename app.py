@@ -133,11 +133,18 @@ def stream_generate(task_id):
                     
                     # 检查结果类型和长度
                     if isinstance(result, tuple):
-                        if len(result) == 3:  # 带性能数据的完成事件
-                            step, text, performance_data = result
-                        else:  # 普通事件，没有性能数据
+                        if len(result) == 3:  # 带性能数据或温度数据的事件
+                            step, text, extra_data = result
+                            if "temperature" in extra_data:  # 是温度数据
+                                performance_data = None
+                                temperature = extra_data["temperature"]
+                            else:  # 是性能数据
+                                performance_data = extra_data
+                                temperature = None
+                        else:  # 普通事件，没有额外数据
                             step, text = result
                             performance_data = None
+                            temperature = None
                     else:
                         logger.error(f"任务 {task_id} 收到非元组数据: {result}")
                         continue
@@ -190,7 +197,12 @@ def stream_generate(task_id):
                         # 对于常规步骤，只在特定间隔记录日志，避免日志过多
                         if step % 50 == 0:
                             logger.info(f"任务 {task_id} 步骤 {step}")
-                        data = json.dumps({"step": step, "text": text})
+                        # 构建数据对象，如果有温度信息则包含
+                        data_obj = {"step": step, "text": text}
+                        if temperature is not None:
+                            data_obj["temperature"] = temperature
+                            
+                        data = json.dumps(data_obj)
                         yield f"data: {data}\n\n"
                 except queue.Empty:
                     # 超时退出
@@ -223,10 +235,19 @@ def generate_text(task_id):
     max_new_tokens = params.get('max_new_tokens', 512)
     alg = params.get('alg', 'origin')
     alg_temp = params.get('alg_temp', 0.2)
+    random_temp = params.get('random_temp', False)  # 新增随机温度参数
+    temp_min = params.get('temp_min', 0.1)  # 最小温度值
+    temp_max = params.get('temp_max', 1.0)  # 最大温度值
     
     try:
         logger.info(f"开始为任务 {task_id} 生成文本")
-        logger.info(f"参数：steps={steps}, temperature={temperature}, top_p={top_p}, max_new_tokens={max_new_tokens}, alg={alg}, alg_temp={alg_temp}")
+        if random_temp:
+            logger.info(f"参数：steps={steps}, 随机温度范围=[{temp_min}-{temp_max}], top_p={top_p}, max_new_tokens={max_new_tokens}, alg={alg}, alg_temp={alg_temp}")
+        else:
+            logger.info(f"参数：steps={steps}, temperature={temperature}, top_p={top_p}, max_new_tokens={max_new_tokens}, alg={alg}, alg_temp={alg_temp}")
+        
+        if random_temp:
+            logger.info(f"启用随机温度：范围 {temp_min} - {temp_max}")
         start_time = time.time()
         last_log_time = start_time
         
@@ -257,9 +278,12 @@ def generate_text(task_id):
         
         logger.info(f"任务 {task_id} 输入长度: {len(input_ids[0])} tokens")
         
+        # 跟踪当前使用的温度值
+        current_temperature = temperature
+        
         # 模型生成的钩子函数
         def generation_tokens_hook_func(step, x, logits):
-            nonlocal last_log_time, last_text, unchanged_count
+            nonlocal last_log_time, last_text, unchanged_count, current_temperature
             current_time = time.time()
             current_text = tokenizer.decode(x[0].tolist()).split(tokenizer.eos_token)[0]
             token_count = len(x[0]) - len(input_ids[0])
@@ -275,6 +299,12 @@ def generate_text(task_id):
                 step_queue.put((0, current_text))
                 last_text = current_text
                 return x
+            
+            # 如果启用了随机温度，为每次迭代生成新的温度值
+            if random_temp and step > 0:
+                import random
+                current_temperature = random.uniform(temp_min, temp_max)
+                logger.info(f"任务 {task_id} 步骤 {step} 使用随机温度: {current_temperature:.2f}")
             
             # 检查文本是否变化
             if current_text == last_text:
@@ -292,15 +322,24 @@ def generate_text(task_id):
             
             # 每5步或者时间间隔超过1秒记录一次日志
             if step % 5 == 0 or current_time - last_log_time > 1.0:
-                logger.info(f"任务 {task_id} 步骤 {step}/{steps}: 已生成 {token_count} tokens，耗时 {current_time - start_time:.2f}s")
+                if random_temp:
+                    logger.info(f"任务 {task_id} 步骤 {step}/{steps}: 温度 {current_temperature:.2f}, 已生成 {token_count} tokens, 耗时 {current_time - start_time:.2f}s")
+                else:
+                    logger.info(f"任务 {task_id} 步骤 {step}/{steps}: 已生成 {token_count} tokens，耗时 {current_time - start_time:.2f}s")
                 last_log_time = current_time
             
-            step_queue.put((step, current_text))
+            # 将当前步骤，生成的文本和当前温度值一起发送到队列
+            if random_temp:
+                # 如果使用随机温度，同时发送温度值
+                step_queue.put((step, current_text, {"temperature": current_temperature}))
+            else:
+                step_queue.put((step, current_text))
             time.sleep(0.05)  # 稍微减慢速度以便观察
             return x
         
         # 生成文本
         logger.info(f"任务 {task_id} 开始扩散生成过程")
+        # 如果使用随机温度，首次迭代使用初始温度，后续会在钩子函数中更新
         output = model.diffusion_generate(
             input_ids,
             attention_mask=attention_mask,
@@ -308,7 +347,7 @@ def generate_text(task_id):
             output_history=True,
             return_dict_in_generate=True,
             steps=steps,
-            temperature=temperature,
+            temperature=temperature,  # 使用initial_temperature作为起始温度
             top_p=top_p,
             alg=alg,
             alg_temp=alg_temp,

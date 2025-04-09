@@ -126,6 +126,34 @@
                                 </div>
                             </div>
                             
+                            <!-- 新增：随机温度设置 -->
+                            <div class="mt-2">
+                                <div class="flex items-center mb-1">
+                                    <input type="checkbox" id="randomTempToggle" class="mr-2">
+                                    <label class="block text-sm font-medium text-gray-700">启用迭代随机温度</label>
+                                </div>
+                                <div id="randomTempSettings" class="pl-5 mt-2 border-l-2 border-gray-200 hidden">
+                                    <div class="mb-2">
+                                        <label class="block text-sm font-medium text-gray-700 mb-1">温度最小值</label>
+                                        <input type="range" id="tempMinRange" min="0" max="0.9" step="0.05" value="0.1" class="w-full">
+                                        <div class="flex justify-between text-xs text-gray-500">
+                                            <span>0.0</span>
+                                            <span id="tempMinValue">0.1</span>
+                                            <span>0.9</span>
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <label class="block text-sm font-medium text-gray-700 mb-1">温度最大值</label>
+                                        <input type="range" id="tempMaxRange" min="0.1" max="1" step="0.05" value="1.0" class="w-full">
+                                        <div class="flex justify-between text-xs text-gray-500">
+                                            <span>0.1</span>
+                                            <span id="tempMaxValue">1.0</span>
+                                            <span>1.0</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            
                             <div>
                                 <label class="block text-sm font-medium text-gray-700 mb-1">top_p</label>
                                 <input type="range" id="topPRange" min="0" max="1" step="0.1" value="0.7" class="w-full">
@@ -257,6 +285,28 @@
             
             paramsContainer.classList.add('hidden');
             
+            // 随机温度控制
+            const randomTempToggle = document.getElementById('randomTempToggle');
+            const randomTempSettings = document.getElementById('randomTempSettings');
+            const tempRangeControl = document.getElementById('tempRange');
+            const tempValueDisplay = document.getElementById('tempValue');
+            
+            randomTempToggle.addEventListener('change', function() {
+                randomTempSettings.classList.toggle('hidden', !this.checked);
+                // 当启用随机温度时，普通温度控制变暗表示不会完全生效
+                if (this.checked) {
+                    tempRangeControl.classList.add('opacity-50');
+                    tempValueDisplay.classList.add('opacity-50');
+                } else {
+                    tempRangeControl.classList.remove('opacity-50');
+                    tempValueDisplay.classList.remove('opacity-50');
+                }
+            });
+            
+            // 更新温度范围值的显示
+            updateValueDisplay('tempMinRange', 'tempMinValue');
+            updateValueDisplay('tempMaxRange', 'tempMaxValue');
+            
             function submitQuery() {
                 iterationHistory = {};
                 iterationSelector.innerHTML = '';
@@ -279,6 +329,15 @@
                     alg: document.getElementById('algSelect').value,
                     alg_temp: parseFloat(document.getElementById('algTempRange').value)
                 };
+                
+                // 添加随机温度相关参数
+                const randomTempEnabled = document.getElementById('randomTempToggle').checked;
+                if (randomTempEnabled) {
+                    params.random_temp = true;
+                    params.temp_min = parseFloat(document.getElementById('tempMinRange').value);
+                    params.temp_max = parseFloat(document.getElementById('tempMaxRange').value);
+                }
+                
                 totalSteps = params.steps;
                 
                 userInputElem.disabled = true;
@@ -346,15 +405,30 @@
                 let currentStep = 0;
                 if (typeof eventData.step === 'number') {
                     currentStep = eventData.step;
-                    iterationHistory[currentStep] = eventData.text;
-                    stepCounter.textContent = `步骤: ${currentStep}/${totalSteps}`;
+                    // 存储文本和可能的温度信息
+                    iterationHistory[currentStep] = {
+                        text: eventData.text,
+                        temperature: eventData.temperature // 如果有温度信息
+                    };
+                    
+                    // 更新步骤计数器，如果有温度信息则显示
+                    let stepText = `步骤: ${currentStep}/${totalSteps}`;
+                    if (eventData.temperature !== undefined) {
+                        stepText += ` [温度: ${eventData.temperature.toFixed(2)}]`;
+                    }
+                    stepCounter.textContent = stepText;
+                    
+                    // 替换掩码标记为带有特殊样式的span
                     const formattedText = eventData.text.replace(/<\|mask\|>/g, '<span class="mask-token">[Mask]</span>');
                     outputContainer.innerHTML = formattedText;
                     updateIterationSelector(currentStep);
                     outputContainer.scrollTop = outputContainer.scrollHeight;
                 } else if (eventData.step === "完成") {
                     const finalStepKey = Math.max(...Object.keys(iterationHistory).map(Number).filter(isFinite), 0);
-                    iterationHistory['完成'] = eventData.text;
+                    iterationHistory['完成'] = {
+                        text: eventData.text
+                        // 最终结果不需要温度信息
+                    };
                     
                     const formattedText = eventData.text.replace(/<\|mask\|>/g, '<span class="mask-token">[Mask]</span>');
                     outputContainer.innerHTML = formattedText;
@@ -398,8 +472,17 @@
                 steps.forEach(stepKey => {
                     const option = document.createElement('option');
                     const displayKey = (stepKey === Infinity) ? '完成' : stepKey;
+                    
+                    // 显示步骤编号，如果有温度信息则添加温度值
+                    let optionText = `步骤 ${displayKey}`;
+                    if (displayKey !== '完成' && 
+                        iterationHistory[displayKey] && 
+                        iterationHistory[displayKey].temperature !== undefined) {
+                        optionText += ` [温度: ${iterationHistory[displayKey].temperature.toFixed(2)}]`;
+                    }
+                    
                     option.value = displayKey;
-                    option.textContent = `步骤 ${displayKey}`;
+                    option.textContent = optionText;
                     iterationSelector.appendChild(option);
                 });
                 
@@ -468,12 +551,19 @@
             iterationSelector.addEventListener('change', function() {
                 const selectedStep = this.value;
                 if (iterationHistory[selectedStep] !== undefined) {
-                    const formattedText = iterationHistory[selectedStep].replace(/<\|mask\|>/g, '<span class="mask-token">[Mask]</span>');
+                    const stepData = iterationHistory[selectedStep];
+                    const formattedText = stepData.text.replace(/<\|mask\|>/g, '<span class="mask-token">[Mask]</span>');
                     outputContainer.innerHTML = formattedText;
+                    
+                    // 更新步骤计数器，如果有温度信息则显示
                     if (selectedStep === '完成') {
                          stepCounter.textContent = `步骤: 完成 (${totalSteps}/${totalSteps})`;
                     } else {
-                         stepCounter.textContent = `步骤: ${selectedStep}/${totalSteps}`;
+                         let stepText = `步骤: ${selectedStep}/${totalSteps}`;
+                         if (stepData.temperature !== undefined) {
+                             stepText += ` [温度: ${stepData.temperature.toFixed(2)}]`;
+                         }
+                         stepCounter.textContent = stepText;
                     }
                     outputContainer.scrollTop = outputContainer.scrollHeight;
                 }
