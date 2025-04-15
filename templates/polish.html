@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Dream-v0-Instruct-7B 演示</title>
+    <title>Dream-v0-Instruct-7B 文本润色</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         .custom-scrollbar::-webkit-scrollbar {
@@ -24,6 +24,28 @@
             background-color: rgba(242, 255, 55, 0.2);
             padding: 0 2px;
             border-radius: 2px;
+        }
+        
+        /* 标记token的样式 */
+        .token {
+            display: inline-block;
+            margin: 2px;
+            padding: 3px 6px;
+            border-radius: 4px;
+            cursor: pointer;
+            background-color: #f0f4f8;
+            border: 1px solid #e0e4e8;
+            transition: all 0.2s;
+        }
+        
+        .token.masked {
+            background-color: #ffeaa7;
+            border-color: #fdcb6e;
+        }
+        
+        .token.selected {
+            background-color: #dff9fb;
+            border-color: #74b9ff;
         }
         
         /* 模态框样式 */
@@ -80,21 +102,42 @@
 </head>
 <body class="bg-gray-100 min-h-screen">
     <div class="container mx-auto py-8 px-4">
-        <h1 class="text-3xl font-bold text-center mb-8 text-gray-800">Dream-v0-Instruct-7B 扩散文本生成演示</h1>
+        <h1 class="text-3xl font-bold text-center mb-8 text-gray-800">Dream-v0-Instruct-7B 智能文本润色工具</h1>
         
         <div class="flex flex-col lg:flex-row gap-6">
             <!-- 左侧面板：输入和参数 -->
             <div class="w-full lg:w-2/5 flex flex-col gap-6">
                 <div class="bg-white rounded-lg shadow-lg p-6">
                     <h2 class="text-xl font-semibold mb-4 text-gray-700">系统提示</h2>
-                    <textarea id="systemPrompt" class="w-full p-3 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 custom-scrollbar" rows="2" placeholder="例如: You are a helpful assistant.">You are a helpful assistant.</textarea>
+                    <textarea id="systemPrompt" class="w-full p-3 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 custom-scrollbar" rows="2" placeholder="例如: You are a helpful assistant that improves text.">请帮我润色以下文字，使其更加专业、流畅和有吸引力，同时保持原意。注意改进语法、用词和结构，但不要添加新的内容。如有必要，可以调整段落结构以提高可读性。</textarea>
                 </div>
                 
                 <div class="bg-white rounded-lg shadow-lg p-6">
-                    <h2 class="text-xl font-semibold mb-4 text-gray-700">用户输入</h2>
+                    <h2 class="text-xl font-semibold mb-4 text-gray-700">原始文本</h2>
                     <div class="flex flex-col">
-                        <textarea id="userInput" class="w-full p-3 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 custom-scrollbar" rows="2" placeholder="输入您的问题..."></textarea>
-                        <button id="submitBtn" class="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-md transition-colors mt-2">发送</button>
+                        <textarea id="originalText" class="w-full p-3 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 custom-scrollbar" rows="6" placeholder="输入需要润色的文本..."></textarea>
+                        <div class="flex justify-between mt-2">
+                            <button id="tokenizeBtn" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md transition-colors">分词</button>
+                            <button id="clearSelectionBtn" class="bg-gray-500 hover:bg-gray-600 text-white px-4 py-2 rounded-md transition-colors">清除选择</button>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="bg-white rounded-lg shadow-lg p-6">
+                    <h2 class="text-xl font-semibold mb-4 text-gray-700">Token 预览 <span class="text-xs text-gray-500 font-normal">(点击token进行标记/取消标记)</span></h2>
+                    <div id="tokenContainer" class="p-4 bg-gray-50 rounded-md min-h-[150px] max-h-[300px] overflow-auto custom-scrollbar"></div>
+                    <div class="flex mt-2 items-center justify-center">
+                        <div class="flex items-center mr-4">
+                            <div class="w-4 h-4 rounded-sm bg-yellow-200 border border-yellow-400 mr-1"></div>
+                            <span class="text-xs text-gray-600">标记的Token（将在结果中被AI重新生成）</span>
+                        </div>
+                    </div>
+                    <div class="mt-2 text-xs text-gray-500">
+                        <p>标记的内容将在结果中被掩码并由AI重新生成，未标记的部分保持不变</p>
+                        <p id="maskCountWarning" class="text-yellow-600 mt-1 hidden">注意：为获得最佳效果，建议一次不要标记超过30个token</p>
+                    </div>
+                    <div class="mt-2 text-center">
+                        <button id="generateBtn" class="bg-green-600 hover:bg-green-700 text-white px-6 py-3 rounded-md transition-colors mt-2 w-full">生成润色文本</button>
                     </div>
                 </div>
                 
@@ -126,7 +169,7 @@
                                 </div>
                             </div>
                             
-                            <!-- 新增：随机温度设置 -->
+                            <!-- 随机温度设置 -->
                             <div class="mt-2">
                                 <div class="flex items-center mb-1">
                                     <input type="checkbox" id="randomTempToggle" class="mr-2">
@@ -165,16 +208,6 @@
                             </div>
                             
                             <div>
-                                <label class="block text-sm font-medium text-gray-700 mb-1">最大生成长度 (max_new_tokens)</label>
-                                <input type="range" id="maxTokensRange" min="128" max="2048" step="64" value="512" class="w-full">
-                                <div class="flex justify-between text-xs text-gray-500">
-                                    <span>128</span>
-                                    <span id="maxTokensValue">512</span>
-                                    <span>2048</span>
-                                </div>
-                            </div>
-                            
-                            <div>
                                 <label class="block text-sm font-medium text-gray-700 mb-1">采样算法 (alg)</label>
                                 <select id="algSelect" class="w-full p-2 border border-gray-300 rounded-md">
                                     <option value="entropy">entropy (基于熵的采样，推荐)</option>
@@ -205,7 +238,6 @@
                         </svg>
                         Dream-v0-Instruct-7B 模型源码
                     </a>
-                    <p class="text-xs text-gray-500 mt-1">HKUNLP/Dream: 扩散型文本生成模型 | <span class="about-btn" id="openAboutModal">关于我</span></p>
                 </div>
             </div>
             
@@ -240,8 +272,12 @@
     <script>
         document.addEventListener('DOMContentLoaded', function() {
             const systemPromptElem = document.getElementById('systemPrompt');
-            const userInputElem = document.getElementById('userInput');
-            const submitBtn = document.getElementById('submitBtn');
+            const originalTextElem = document.getElementById('originalText');
+            const tokenizeBtn = document.getElementById('tokenizeBtn');
+            const tokenContainer = document.getElementById('tokenContainer');
+            const clearSelectionBtn = document.getElementById('clearSelectionBtn');
+            const generateBtn = document.getElementById('generateBtn');
+            const submitBtn = document.getElementById('generateBtn');
             const clearBtn = document.getElementById('clearBtn');
             const stopBtn = document.getElementById('stopBtn');
             const outputContainer = document.getElementById('outputContainer');
@@ -253,14 +289,15 @@
             const genTPS = document.getElementById('genTPS');
             const paramsContainer = document.getElementById('paramsContainer');
             const toggleParamsBtn = document.getElementById('toggleParamsBtn');
-            const openAboutModalBtn = document.getElementById('openAboutModal');
-            const aboutModal = document.getElementById('aboutModal');
-            const closeAboutModalBtn = document.getElementById('closeAboutModal');
             
             let eventSource = null;
             let currentTaskId = null;
             let iterationHistory = {};
             let totalSteps = 0;
+            let originalTokens = [];
+            let maskedTokens = new Set();
+            let selectionStart = -1;
+            let selectionEnd = -1;
             
             function updateValueDisplay(rangeId, valueId) {
                 const range = document.getElementById(rangeId);
@@ -307,6 +344,216 @@
             updateValueDisplay('tempMinRange', 'tempMinValue');
             updateValueDisplay('tempMaxRange', 'tempMaxValue');
             
+            // Token化原始文本的功能
+            tokenizeBtn.addEventListener('click', tokenizeText);
+            
+            // 当原始文本变更时自动token化
+            originalTextElem.addEventListener('input', function() {
+                tokenizeText();
+            });
+            
+            // 清除选择
+            clearSelectionBtn.addEventListener('click', clearSelection);
+            
+            // 生成润色文本
+            generateBtn.addEventListener('click', submitQuery);
+            
+            // 清除输出
+            clearBtn.addEventListener('click', clearOutput);
+            
+            // 停止生成
+            stopBtn.addEventListener('click', stopGeneration);
+            
+            // Token化文本
+            function tokenizeText() {
+                const text = originalTextElem.value.trim();
+                if (!text) {
+                    tokenContainer.innerHTML = '<div class="text-gray-400 text-center p-4">请输入文本后再进行分词</div>';
+                    originalTokens = [];
+                    return;
+                }
+                
+                // 简单的分词策略：按空格、标点符号分割
+                // 在实际应用中，这里应该使用模型的tokenizer进行准确的分词
+                originalTokens = [];
+                const segments = text.split(/([.,!?\s，。！？\n])/);
+                
+                // 过滤空字符串，同时保留空格和标点符号
+                for (let i = 0; i < segments.length; i++) {
+                    const segment = segments[i];
+                    if (segment) {
+                        // 如果是单个字符，保持原样
+                        if (segment.length === 1) {
+                            originalTokens.push(segment);
+                        } else {
+                            // 否则，进一步按字符分割
+                            // 这只是一个简单的模拟，实际应使用真正的tokenizer
+                            for (let j = 0; j < segment.length; j++) {
+                                originalTokens.push(segment[j]);
+                            }
+                        }
+                    }
+                }
+                
+                // 更新UI
+                renderTokens();
+                
+                // 重置选择
+                selectionStart = -1;
+                selectionEnd = -1;
+            }
+            
+            // 渲染Token UI
+            function renderTokens() {
+                tokenContainer.innerHTML = '';
+                
+                if (originalTokens.length === 0) {
+                    tokenContainer.innerHTML = '<div class="text-gray-400 text-center p-4">未找到任何token</div>';
+                    return;
+                }
+                
+                for (let i = 0; i < originalTokens.length; i++) {
+                    const tokenElem = document.createElement('span');
+                    tokenElem.classList.add('token');
+                    tokenElem.textContent = originalTokens[i];
+                    tokenElem.dataset.index = i;
+                    
+                    // 检查是否为掩码token
+                    if (maskedTokens.has(i)) {
+                        tokenElem.classList.add('masked');
+                    }
+                    
+                    // 检查是否在选择范围内
+                    if (selectionStart !== -1 && selectionEnd !== -1 && 
+                        i >= selectionStart && i <= selectionEnd) {
+                        tokenElem.classList.add('selected');
+                    }
+                    
+                    // 处理单击事件 - 直接切换掩码状态
+                    tokenElem.addEventListener('click', function(event) {
+                        const index = parseInt(this.dataset.index);
+                        
+                        if (event.shiftKey && selectionStart !== -1) {
+                            // Shift+点击，选择范围
+                            selectionEnd = index;
+                            if (selectionEnd < selectionStart) {
+                                // 交换，确保start <= end
+                                [selectionStart, selectionEnd] = [selectionEnd, selectionStart];
+                            }
+                            
+                            // 直接标记或取消标记选中的范围
+                            for (let i = selectionStart; i <= selectionEnd; i++) {
+                                if (maskedTokens.has(i)) {
+                                    maskedTokens.delete(i);  // 如果已标记，则取消标记
+                                } else {
+                                    maskedTokens.add(i);  // 否则标记
+                                }
+                            }
+                            
+                            // 清除当前选择
+                            selectionStart = -1;
+                            selectionEnd = -1;
+                        } else {
+                            // 单击，直接切换当前token的掩码状态
+                            if (maskedTokens.has(index)) {
+                                maskedTokens.delete(index);  // 取消标记
+                            } else {
+                                maskedTokens.add(index);  // 标记
+                            }
+                            
+                            // 更新选择范围
+                            selectionStart = index;
+                            selectionEnd = index;
+                        }
+                        
+                        renderTokens();  // 更新UI
+                    });
+                    
+                    tokenContainer.appendChild(tokenElem);
+                }
+                
+                // 添加选择指导文本
+                const helpText = document.createElement('p');
+                helpText.classList.add('text-xs', 'text-gray-500', 'mt-3');
+                helpText.innerHTML = '点击直接标记/取消标记token，按住Shift+点击可选择范围进行批量标记或取消。标记的部分将在结果文本中被掩码，由AI重新生成。';
+                tokenContainer.appendChild(helpText);
+            }
+            
+            // 清除所有选择和标记
+            function clearSelection() {
+                selectionStart = -1;
+                selectionEnd = -1;
+                maskedTokens.clear();
+                renderTokens();
+            }
+            
+            // 构建带有掩码的文本 - 原文 + 掩码文本格式
+            function buildMaskedText() {
+                if (originalTokens.length === 0) {
+                    return '';
+                }
+                
+                // 构建原始文本
+                let originalText = '';
+                for (let i = 0; i < originalTokens.length; i++) {
+                    originalText += originalTokens[i];
+                }
+                
+                // 构建与原文相同的润色文本（作为初始状态）
+                let polishedText = '';
+                let maskCount = 0;
+                for (let i = 0; i < originalTokens.length; i++) {
+                    // 如果标记为掩码，则添加掩码标记
+                    if (maskedTokens.has(i)) {
+                        polishedText += '<|mask|>';
+                        maskCount++;
+                    } else {
+                        // 否则保持原样
+                        polishedText += originalTokens[i];
+                    }
+                }
+                
+                // 显示掩码数量警告
+                const maskCountWarning = document.getElementById('maskCountWarning');
+                if (maskCountWarning) {
+                    if (maskCount > 30) {
+                        maskCountWarning.classList.remove('hidden');
+                        maskCountWarning.textContent = `警告：当前已标记${maskCount}个token，超过推荐值(30)，可能影响生成质量`;
+                    } else if (maskCount > 0) {
+                        maskCountWarning.classList.remove('hidden');
+                        maskCountWarning.textContent = `当前已标记${maskCount}个token，推荐不超过30个`;
+                    } else {
+                        maskCountWarning.classList.add('hidden');
+                    }
+                }
+                
+                // 格式：原文 + 两个换行符 + 带掩码的润色文本
+                return originalText + '\n\n' + polishedText;
+            }
+            
+            // 计算最适合的步骤数和最大token数
+            function calculateOptimalParams() {
+                // 获取原始文本长度
+                const originalLength = originalTokens.length;
+                
+                // 估计系统提示的token长度 (简单估计，实际应该用tokenizer)
+                const systemPromptLength = Math.ceil(systemPromptElem.value.length / 4);
+                
+                // 计算总长度: prompt + 2 * 原文
+                const totalLength = systemPromptLength + (2 * originalLength);
+                
+                // 向上对齐到16的倍数
+                const alignedLength = Math.ceil(totalLength / 16) * 16;
+                
+                // 步骤数设置为总长度的1/10左右
+                const steps = Math.max(8, Math.ceil(alignedLength / 10));
+                
+                return {
+                    max_new_tokens: alignedLength,
+                    steps: steps
+                };
+            }
+            
             function submitQuery() {
                 iterationHistory = {};
                 iterationSelector.innerHTML = '';
@@ -314,21 +561,45 @@
                 performanceStats.classList.add('hidden');
                 
                 const systemPrompt = systemPromptElem.value.trim();
-                const userInput = userInputElem.value.trim();
+                const originalText = originalTextElem.value.trim();
                 
-                if (!userInput) {
-                    alert('请输入问题');
+                if (!originalText) {
+                    alert('请输入原始文本');
                     return;
                 }
                 
+                if (originalTokens.length === 0) {
+                    alert('请先对文本进行分词');
+                    return;
+                }
+                
+                if (maskedTokens.size === 0) {
+                    alert('请至少标记一个需要润色的token');
+                    return;
+                }
+                
+                // 构建带掩码的文本
+                const maskedText = buildMaskedText();
+                
+                // 获取最佳参数
+                const optimalParams = calculateOptimalParams();
+                
+                // 获取用户自定义参数
                 const params = {
                     steps: parseInt(document.getElementById('stepsRange').value),
                     temperature: parseFloat(document.getElementById('tempRange').value),
                     top_p: parseFloat(document.getElementById('topPRange').value),
-                    max_new_tokens: parseInt(document.getElementById('maxTokensRange').value),
+                    max_new_tokens: optimalParams.max_new_tokens, // 使用计算的最佳值
                     alg: document.getElementById('algSelect').value,
                     alg_temp: parseFloat(document.getElementById('algTempRange').value)
                 };
+                
+                // 如果用户设置的步骤数小于建议值，使用建议值
+                if (params.steps < optimalParams.steps) {
+                    params.steps = optimalParams.steps;
+                    document.getElementById('stepsRange').value = optimalParams.steps;
+                    document.getElementById('stepsValue').textContent = optimalParams.steps;
+                }
                 
                 // 添加随机温度相关参数
                 const randomTempEnabled = document.getElementById('randomTempToggle').checked;
@@ -340,12 +611,13 @@
                 
                 totalSteps = params.steps;
                 
-                userInputElem.disabled = true;
+                // 禁用输入元素
+                originalTextElem.disabled = true;
                 systemPromptElem.disabled = true;
-                submitBtn.disabled = true;
-                submitBtn.textContent = '生成中...';
-                submitBtn.classList.add('bg-blue-400');
-                submitBtn.classList.remove('bg-blue-600', 'hover:bg-blue-700');
+                generateBtn.disabled = true;
+                generateBtn.textContent = '生成中...';
+                generateBtn.classList.add('bg-green-400');
+                generateBtn.classList.remove('bg-green-600', 'hover:bg-green-700');
                 clearBtn.disabled = true;
                 stopBtn.classList.remove('hidden');
                 stepCounter.textContent = `步骤: 0/${totalSteps}`;
@@ -355,12 +627,12 @@
                     eventSource.close();
                 }
                 
-                fetch('/api/generate', {
+                fetch('/api/polish', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ 
                         system_prompt: systemPrompt, 
-                        user_input: userInput,
+                        user_input: maskedText,
                         params: params 
                     })
                 })
@@ -418,8 +690,9 @@
                     }
                     stepCounter.textContent = stepText;
                     
-                    // 替换掩码标记为带有特殊样式的span
-                    const formattedText = eventData.text.replace(/<\|mask\|>/g, '<span class="mask-token">[Mask]</span>');
+                    // 去除<|endoftext|>标记，并替换掩码标记为带有特殊样式的span
+                    const filteredText = eventData.text.replace(/<\|endoftext\|>/g, '');
+                    const formattedText = filteredText.replace(/<\|mask\|>/g, '<span class="mask-token">[Mask]</span>');
                     outputContainer.innerHTML = formattedText;
                     updateIterationSelector(currentStep);
                     outputContainer.scrollTop = outputContainer.scrollHeight;
@@ -430,7 +703,9 @@
                         // 最终结果不需要温度信息
                     };
                     
-                    const formattedText = eventData.text.replace(/<\|mask\|>/g, '<span class="mask-token">[Mask]</span>');
+                    // 去除<|endoftext|>标记，并替换掩码标记为带有特殊样式的span
+                    const filteredText = eventData.text.replace(/<\|endoftext\|>/g, '');
+                    const formattedText = filteredText.replace(/<\|mask\|>/g, '<span class="mask-token">[Mask]</span>');
                     outputContainer.innerHTML = formattedText;
                     stepCounter.textContent = `步骤: 完成 (${totalSteps}/${totalSteps})`;
                     updateIterationSelector('完成');
@@ -491,12 +766,12 @@
             }
             
             function resetUI(clearTask = true) {
-                userInputElem.disabled = false;
+                originalTextElem.disabled = false;
                 systemPromptElem.disabled = false;
-                submitBtn.disabled = false;
-                submitBtn.textContent = '发送';
-                submitBtn.classList.remove('bg-blue-400');
-                submitBtn.classList.add('bg-blue-600', 'hover:bg-blue-700');
+                generateBtn.disabled = false;
+                generateBtn.textContent = '生成润色文本';
+                generateBtn.classList.remove('bg-green-400');
+                generateBtn.classList.add('bg-green-600', 'hover:bg-green-700');
                 clearBtn.disabled = false;
                 stopBtn.classList.add('hidden');
                 if (clearTask) {
@@ -538,21 +813,14 @@
                     });
             }
             
-            submitBtn.addEventListener('click', submitQuery);
-            userInputElem.addEventListener('keypress', function(e) {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault();
-                    submitQuery();
-                }
-            });
-            clearBtn.addEventListener('click', clearOutput);
-            stopBtn.addEventListener('click', stopGeneration);
-            
+            // 修改迭代选择器事件监听的处理函数
             iterationSelector.addEventListener('change', function() {
                 const selectedStep = this.value;
                 if (iterationHistory[selectedStep] !== undefined) {
                     const stepData = iterationHistory[selectedStep];
-                    const formattedText = stepData.text.replace(/<\|mask\|>/g, '<span class="mask-token">[Mask]</span>');
+                    // 去除<|endoftext|>标记，并替换掩码标记为带有特殊样式的span
+                    const filteredText = stepData.text.replace(/<\|endoftext\|>/g, '');
+                    const formattedText = filteredText.replace(/<\|mask\|>/g, '<span class="mask-token">[Mask]</span>');
                     outputContainer.innerHTML = formattedText;
                     
                     // 更新步骤计数器，如果有温度信息则显示
@@ -569,52 +837,9 @@
                 }
             });
             
-            if (openAboutModalBtn && aboutModal && closeAboutModalBtn) {
-                openAboutModalBtn.addEventListener('click', () => {
-                    aboutModal.style.display = 'block';
-                });
-                
-                closeAboutModalBtn.addEventListener('click', () => {
-                     aboutModal.style.display = 'none';
-                });
-                
-                window.addEventListener('click', (event) => {
-                    if (event.target == aboutModal) {
-                        aboutModal.style.display = 'none';
-                    }
-                });
-            } else {
-                console.warn("未能找到关于模态框的所有元素。")
-            }
+            // 初始化自动分词
+            tokenizeText();
         });
     </script>
-    
-    <!-- 个人介绍模态框 -->
-    <div id="about-modal" class="modal">
-        <div class="modal-content">
-            <h3 style="font-size: 20px; margin-bottom: 10px; font-weight: bold;">👋 嗨，我是洛小山</h3>
-            <p style="color: #666; font-size: 14px;">白天是个爱折腾的 AI 产品经理，晚上是个快乐的小开发~ </p>
-            
-            <p style="color: #1890ff; margin-top: 15px;">🎯 关于这个工具</p>
-            <p>这是我基于Dream-v0-Instruct-7B模型开发的文本生成演示应用，希望能帮你体验扩散文本生成的魅力！</p>
-            
-            <p style="color: #1890ff; margin-top: 15px;">🚀 更多好玩的</p>
-            <p>我还在捣鼓更多有趣的 AI 小工具，会在公众号【洛小山】和大家分享：</p>
-            <ul style="color: #666; margin: 8px 0; padding-left: 20px;">
-                <li>各种实用的 AI 工具</li>
-                <li>有趣的技术教程</li>
-                <li>AI 技术到产品的实践</li>
-                <li>AI 产品拆解</li>
-            </ul>
-            
-            <p style="color: #1890ff; margin-top: 15px;">💡 期待你的想法</p>
-            <p>在日常工作或生活中，<span style="color: #ff4d4f; font-weight: 500;">有没有觉得"要是有个 AI 工具能帮我做这个就好了"？</span>欢迎联系我交流，说不定你的小需求就能变成下一个实用工具！</p>
-            
-            <p style="color: #1890ff; margin-top: 15px;">🐛 遇到问题？</p>
-            <p>开发不易，难免有 bug ~ 如果你发现了什么问题，欢迎来和我说说，我会及时修复的！你的反馈就是对我最好的支持 😊</p>
-            
-            <button id="close-modal" class="modal-close">关闭</button>
-        </div>
-    </div>
 </body>
 </html> 
